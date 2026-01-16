@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 
 interface ImageViewerProps {
   src: string;
@@ -31,6 +31,7 @@ export default function ImageViewer({
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [isDebugVisible, setIsDebugVisible] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
+  const navigate = useNavigate();
 
   // Ref to track debug visibility for the gamepad loop
   const isDebugVisibleRef = useRef(false);
@@ -42,6 +43,7 @@ export default function ImageViewer({
   const lastInputTimeRef = useRef(0);
   const wasActiveRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const lastKeyEventRef = useRef<string>("");
 
   // Need to forward declare xrSessionRef since we use it in cleanup
   const xrSessionRef = useRef<any>(null);
@@ -174,6 +176,7 @@ export default function ImageViewer({
           debugText += `[${i}] Disconnected/Null\n`;
         }
       }
+      debugText += `\nLast Key: ${lastKeyEventRef.current || "None"}`;
       debugDiv.innerText = debugText;
     } else {
       const debugDiv = document.getElementById("gamepad-debug");
@@ -379,19 +382,35 @@ export default function ImageViewer({
     // to prevent conflict or double-handling if browser maps stick to wheel.
     if (Date.now() - lastInputTimeRef.current < 200) return;
 
+    // Debug info for wheel
+    if (isDebugVisible) {
+      lastKeyEventRef.current = `Wheel: dx=${e.deltaX.toFixed(
+        0
+      )}, dy=${e.deltaY.toFixed(0)}`;
+    }
+
     // Check for horizontal scroll (navigation)
+    // Quest thumbstick sends small continuous deltaX values (e.g. 3, 5, etc.)
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
       const now = Date.now();
-      // Increased threshold to filter out momentum scrolling noise
-      if (now - lastInputTimeRef.current > 500 && Math.abs(e.deltaX) > 40) {
-        if (e.deltaX > 0 && onNext) {
-          onNext();
-          lastInputTimeRef.current = now;
-        } else if (e.deltaX < 0 && onPrev) {
-          onPrev();
-          lastInputTimeRef.current = now;
-        } else if (e.deltaX > 0 && nextUrl) {
-          // Link mode
+      // Lowered threshold to 10 to catch thumbstick inputs, and reduced debounce slightly
+      if (now - lastInputTimeRef.current > 400 && Math.abs(e.deltaX) > 10) {
+        if (e.deltaX > 0) {
+          if (onNext) {
+            onNext();
+            lastInputTimeRef.current = now;
+          } else if (nextUrl) {
+            navigate(nextUrl);
+            lastInputTimeRef.current = now;
+          }
+        } else if (e.deltaX < 0) {
+          if (onPrev) {
+            onPrev();
+            lastInputTimeRef.current = now;
+          } else if (prevUrl) {
+            navigate(prevUrl);
+            lastInputTimeRef.current = now;
+          }
         }
       }
       return;
@@ -427,6 +446,8 @@ export default function ImageViewer({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      lastKeyEventRef.current = `${event.key} (${event.code})`;
+
       // Debounce keyboard events against gamepad events to prevent double-fire
       // if the browser maps thumbstick to arrow keys.
       if (Date.now() - lastInputTimeRef.current < 200) {
