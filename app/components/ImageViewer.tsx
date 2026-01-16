@@ -44,6 +44,8 @@ export default function ImageViewer({
   const wasActiveRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const lastKeyEventRef = useRef<string>("");
+  const isScrollingRef = useRef(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Need to forward declare xrSessionRef since we use it in cleanup
   const xrSessionRef = useRef<any>(null);
@@ -389,26 +391,40 @@ export default function ImageViewer({
       )}, dy=${e.deltaY.toFixed(0)}`;
     }
 
+    // Debounce "hold" inputs.
+    // Reset the "scrolling stopped" timer on every event
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+    scrollTimeoutRef.current = setTimeout(() => {
+      isScrollingRef.current = false;
+    }, 150);
+
     // Check for horizontal scroll (navigation)
+    // Stricter check: Horizontal component must be 2x stronger than vertical to avoid accidents when zooming
     // Quest thumbstick sends small continuous deltaX values (e.g. 3, 5, etc.)
-    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-      const now = Date.now();
-      // Lowered threshold to 10 to catch thumbstick inputs, and reduced debounce slightly
-      if (now - lastInputTimeRef.current > 400 && Math.abs(e.deltaX) > 10) {
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) * 2) {
+      // Only trigger if we aren't already in the middle of a continuous scroll gesture
+      if (!isScrollingRef.current && Math.abs(e.deltaX) > 10) {
+        const now = Date.now();
         if (e.deltaX > 0) {
           if (onNext) {
             onNext();
+            isScrollingRef.current = true;
             lastInputTimeRef.current = now;
           } else if (nextUrl) {
             navigate(nextUrl);
+            isScrollingRef.current = true;
             lastInputTimeRef.current = now;
           }
         } else if (e.deltaX < 0) {
           if (onPrev) {
             onPrev();
+            isScrollingRef.current = true;
             lastInputTimeRef.current = now;
           } else if (prevUrl) {
             navigate(prevUrl);
+            isScrollingRef.current = true;
             lastInputTimeRef.current = now;
           }
         }
