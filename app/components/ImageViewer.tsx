@@ -36,6 +36,19 @@ export default function ImageViewer({
   const wasActiveRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
 
+  // Clean up XR session if component unmounts
+  useEffect(() => {
+    return () => {
+      // Use a local variable to capture current ref value if needed,
+      // but refs are mutable so .current is what we want to check at unmount time
+      if (xrSessionRef.current) {
+        xrSessionRef.current
+          .end()
+          .catch((e: any) => console.log("Error ending session", e));
+      }
+    };
+  }, []);
+
   // Reset zoom and pan when image changes
   useEffect(() => {
     setScale(1);
@@ -309,8 +322,93 @@ export default function ImageViewer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onPrev, onNext]);
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const xrSessionRef = useRef<any>(null);
+
+  const toggleFullScreen = async () => {
+    // Check for secure context first (required for WebXR)
+    if (
+      typeof window !== "undefined" &&
+      !window.isSecureContext &&
+      window.location.hostname !== "localhost" &&
+      window.location.hostname !== "127.0.0.1"
+    ) {
+      alert(
+        "WebXR (VR) requires a secure context (HTTPS) or localhost. Please use HTTPS or port forwarding."
+      );
+      // Fallthrough to fullscreen anyway
+    }
+
+    // Try WebXR first if available
+    if (typeof navigator !== "undefined" && "xr" in navigator) {
+      const xr = (navigator as any).xr;
+      try {
+        const isSupported = await xr.isSessionSupported("immersive-vr");
+        if (isSupported) {
+          if (xrSessionRef.current) {
+            await xrSessionRef.current.end();
+            return;
+          }
+
+          const session = await xr.requestSession("immersive-vr", {
+            optionalFeatures: ["dom-overlay"],
+            domOverlay: { root: containerRef.current },
+          });
+
+          xrSessionRef.current = session;
+
+          // Basic WebGL context to drive the session (required by some browsers)
+          const canvas = document.createElement("canvas");
+          const gl = canvas.getContext("webgl", { xrCompatible: true });
+          if (gl) {
+            // Loop to keep session alive and render black background
+            const onFrame = (t: number, frame: any) => {
+              if (!xrSessionRef.current) return;
+
+              const session = frame.session;
+              // We don't need to do complex drawing, but we should clear the color buffer
+              // to ensure a black background if the DOM overlay doesn't cover everything
+              // (though DOM overlay usually sits on top).
+              gl.clearColor(0.0, 0.0, 0.0, 1.0);
+              gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+              session.requestAnimationFrame(onFrame);
+            };
+
+            // @ts-ignore
+            const layer = new XRWebGLLayer(session, gl);
+            session.updateRenderState({ baseLayer: layer });
+            session.requestAnimationFrame(onFrame);
+          }
+
+          session.addEventListener("end", () => {
+            xrSessionRef.current = null;
+          });
+
+          return;
+        }
+      } catch (e) {
+        console.warn("WebXR error, falling back to fullscreen", e);
+        // If the error is specific, we might want to alert it
+        if ((e as any).name === "SecurityError") {
+          alert("WebXR SecurityError: ensuring HTTPS access is required.");
+        }
+      }
+    }
+
+    // Standard Fullscreen Fallback
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen().catch((err) => {
+        console.warn("Error attempting to enable fullscreen:", err);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
   return (
     <div
+      ref={containerRef}
       className="fixed inset-0 bg-black flex items-center justify-center z-50"
       onWheel={handleWheel}
     >
@@ -321,6 +419,28 @@ export default function ImageViewer({
       >
         ✕
       </Link>
+
+      {/* Fullscreen / VR Toggle */}
+      <button
+        onClick={toggleFullScreen}
+        className="absolute top-4 right-16 text-white text-2xl hover:text-gray-300 z-10 p-1"
+        title="Toggle Fullscreen / VR"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={1.5}
+          stroke="currentColor"
+          className="w-6 h-6"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
+          />
+        </svg>
+      </button>
 
       {/* Delete button */}
       {onDelete && (
