@@ -207,7 +207,7 @@ export default function Slideshow() {
       />
 
       {/* Delay control buttons */}
-      <div className="fixed top-4 right-12 flex gap-1 z-50">
+      <div className="fixed top-14 right-4 flex gap-1 z-50">
         {[1000, 3000, 5000, 10000, Infinity].map((delayMs) => (
           <button
             key={delayMs}

@@ -36,6 +36,99 @@ export default function ImageViewer({
   const wasActiveRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
 
+  // Need to forward declare xrSessionRef since we use it in cleanup
+  const xrSessionRef = useRef<any>(null);
+
+  // Store handlers in a ref so the XR loop can always access the latest version
+  const handlersRef = useRef({ onPrev, onNext, prevUrl, nextUrl, setScale });
+  useEffect(() => {
+    handlersRef.current = { onPrev, onNext, prevUrl, nextUrl, setScale };
+  }, [onPrev, onNext, prevUrl, nextUrl]);
+
+  // Unified Gamepad logic
+  const checkGamepadInput = () => {
+    if (typeof navigator === "undefined" || !navigator.getGamepads) return;
+
+    const gamepads = navigator.getGamepads();
+    let inputDetected = false;
+
+    // Check first few gamepads
+    for (let i = 0; i < Math.min(gamepads.length, 2); i++) {
+      const gp = gamepads[i];
+      if (gp) {
+        // Quest controllers map Thumbsticks to axes 2 and 3 usually, or 0/1 depending on browser mapping
+        // We check 2/3 first (common for X/Y on standard gamepad), then 0/1
+        let axisX = gp.axes[2];
+        let axisY = gp.axes[3];
+
+        // Fallback to 0/1 if 2/3 are undefined or empty (sometimes Quest browser uses 2/3 for secondary stick?)
+        // Actually standard gamepad mapping: Left Stick = 0,1. Right Stick = 2,3.
+        // Oculus Touch: Main stick is usually 2,3 in some contexts or 0,1 in others.
+        // Let's just check the strongest signal.
+        if (!axisX && !axisY) {
+          axisX = gp.axes[0];
+          axisY = gp.axes[1];
+        } else {
+          // If both exist, take the one with higher magnitude?
+          // Or just check if 0/1 has input
+          if (Math.abs(gp.axes[0]) > Math.abs(axisX || 0)) axisX = gp.axes[0];
+          if (Math.abs(gp.axes[1]) > Math.abs(axisY || 0)) axisY = gp.axes[1];
+        }
+
+        const now = Date.now();
+
+        // Threshold for activation - Reduced to 0.3 for faster response
+        if (Math.abs(axisX || 0) > 0.3 || Math.abs(axisY || 0) > 0.3) {
+          inputDetected = true;
+          const { onPrev, onNext, setScale } = handlersRef.current;
+
+          if (Math.abs(axisX || 0) > Math.abs(axisY || 0)) {
+            // Horizontal - Navigation
+            const isNewPress = !wasActiveRef.current;
+            const isRepeat = now - lastInputTimeRef.current > 250;
+
+            if (isNewPress || isRepeat) {
+              if ((axisX || 0) < -0.3) {
+                if (onPrev) {
+                  onPrev();
+                  lastInputTimeRef.current = now;
+                  wasActiveRef.current = true;
+                }
+              } else if ((axisX || 0) > 0.3) {
+                if (onNext) {
+                  onNext();
+                  lastInputTimeRef.current = now;
+                  wasActiveRef.current = true;
+                }
+              }
+            }
+          } else {
+            // Vertical - Zoom
+            if (now - lastInputTimeRef.current > 50) {
+              if ((axisY || 0) < -0.3) {
+                setScale((prev) => Math.min(prev * 1.05, 5));
+                lastInputTimeRef.current = now;
+                wasActiveRef.current = true;
+              } else if ((axisY || 0) > 0.3) {
+                setScale((prev) => Math.max(prev / 1.05, 0.1));
+                lastInputTimeRef.current = now;
+                wasActiveRef.current = true;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!inputDetected) {
+      wasActiveRef.current = false;
+    }
+  };
+
+  // Store the check function in a ref so the XR loop can call the logic
+  const checkGamepadRef = useRef(checkGamepadInput);
+  checkGamepadRef.current = checkGamepadInput;
+
   // Clean up XR session if component unmounts
   useEffect(() => {
     return () => {
@@ -205,10 +298,15 @@ export default function ImageViewer({
   };
 
   const handleWheel = (e: React.WheelEvent) => {
+    // If we have recently processed an input (e.g. from Gamepad), ignore wheel
+    // to prevent conflict or double-handling if browser maps stick to wheel.
+    if (Date.now() - lastInputTimeRef.current < 200) return;
+
     // Check for horizontal scroll (navigation)
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
       const now = Date.now();
-      if (now - lastInputTimeRef.current > 500 && Math.abs(e.deltaX) > 20) {
+      // Increased threshold to filter out momentum scrolling noise
+      if (now - lastInputTimeRef.current > 500 && Math.abs(e.deltaX) > 40) {
         if (e.deltaX > 0 && onNext) {
           onNext();
           lastInputTimeRef.current = now;
@@ -216,9 +314,7 @@ export default function ImageViewer({
           onPrev();
           lastInputTimeRef.current = now;
         } else if (e.deltaX > 0 && nextUrl) {
-          // If onNext not defined but nextUrl is (Link mode), can't auto nav easily without router navigate
-          // But wrapper handles navigation clicks.
-          // We rely on parent providing onNext/onPrev for programmatic Nav from here mostly.
+          // Link mode
         }
       }
       return;
@@ -231,83 +327,43 @@ export default function ImageViewer({
     }
   };
 
-  // Gamepad polling for VR/Game controllers
+  // Gamepad polling for VR/Game controllers (Desktop Mode)
   useEffect(() => {
+    // If in VR session, the session loop handles polling
+    if (xrSessionRef.current) return;
+
     let animationFrameId: number;
 
-    const pollGamepad = () => {
-      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-      let inputDetected = false;
-
-      // Check first few gamepads
-      for (let i = 0; i < Math.min(gamepads.length, 2); i++) {
-        const gp = gamepads[i];
-        if (gp) {
-          const axisX = gp.axes[0];
-          const axisY = gp.axes[1];
-          const now = Date.now();
-
-          // Threshold for activation
-          if (Math.abs(axisX) > 0.5 || Math.abs(axisY) > 0.5) {
-            inputDetected = true;
-
-            if (Math.abs(axisX) > Math.abs(axisY)) {
-              // Horizontal - Navigation
-              const isNewPress = !wasActiveRef.current;
-              const isRepeat = now - lastInputTimeRef.current > 400; // 400ms repeat delay
-
-              if (isNewPress || isRepeat) {
-                if (axisX < -0.5) {
-                  if (onPrev) {
-                    onPrev();
-                    lastInputTimeRef.current = now;
-                    wasActiveRef.current = true;
-                  }
-                } else if (axisX > 0.5) {
-                  if (onNext) {
-                    onNext();
-                    lastInputTimeRef.current = now;
-                    wasActiveRef.current = true;
-                  }
-                }
-              }
-            } else {
-              // Vertical - Zoom
-              if (now - lastInputTimeRef.current > 100) {
-                if (axisY < -0.5) {
-                  setScale((prev) => Math.min(prev * 1.1, 5));
-                  lastInputTimeRef.current = now;
-                  wasActiveRef.current = true;
-                } else if (axisY > 0.5) {
-                  setScale((prev) => Math.max(prev / 1.1, 0.1));
-                  lastInputTimeRef.current = now;
-                  wasActiveRef.current = true;
-                }
-              }
-            }
-          }
-        }
+    const pollLoop = () => {
+      if (!xrSessionRef.current) {
+        checkGamepadRef.current(); // Call the unified logic
       }
-
-      if (!inputDetected) {
-        wasActiveRef.current = false;
-      }
-
-      animationFrameId = requestAnimationFrame(pollGamepad);
+      animationFrameId = requestAnimationFrame(pollLoop);
     };
 
     if (typeof navigator !== "undefined" && "getGamepads" in navigator) {
-      animationFrameId = requestAnimationFrame(pollGamepad);
+      animationFrameId = requestAnimationFrame(pollLoop);
     }
 
     return () => cancelAnimationFrame(animationFrameId);
-  }, [onPrev, onNext, prevUrl, nextUrl]);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Debounce keyboard events against gamepad events to prevent double-fire
+      // if the browser maps thumbstick to arrow keys.
+      if (Date.now() - lastInputTimeRef.current < 200) {
+        if (event.key.startsWith("Arrow") || event.key === " ") {
+          event.preventDefault();
+        }
+        return;
+      }
+
       if (event.key === "ArrowLeft") {
+        event.preventDefault();
         if (onPrev) onPrev();
       } else if (event.key === "ArrowRight") {
+        event.preventDefault();
         if (onNext) onNext();
       } else if (event.key === "ArrowUp") {
         event.preventDefault();
@@ -323,7 +379,6 @@ export default function ImageViewer({
   }, [onPrev, onNext]);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const xrSessionRef = useRef<any>(null);
 
   const toggleFullScreen = async () => {
     // Check for secure context first (required for WebXR)
@@ -359,11 +414,16 @@ export default function ImageViewer({
 
           // Basic WebGL context to drive the session (required by some browsers)
           const canvas = document.createElement("canvas");
-          const gl = canvas.getContext("webgl", { xrCompatible: true });
+          const gl = canvas.getContext("webgl", {
+            xrCompatible: true,
+          } as WebGLContextAttributes) as WebGLRenderingContext | null;
           if (gl) {
             // Loop to keep session alive and render black background
             const onFrame = (t: number, frame: any) => {
               if (!xrSessionRef.current) return;
+
+              // Poll gamepad input using the unified logic
+              checkGamepadRef.current();
 
               const session = frame.session;
               // We don't need to do complex drawing, but we should clear the color buffer
@@ -409,13 +469,14 @@ export default function ImageViewer({
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 bg-black flex items-center justify-center z-50"
+      className="fixed inset-0 bg-black flex items-center justify-center z-50 touch-none overscroll-none"
       onWheel={handleWheel}
+      style={{ touchAction: "none", overscrollBehavior: "none" }}
     >
       {/* Close button */}
       <Link
         to={onCloseUrl}
-        className="absolute top-4 right-4 text-white text-2xl hover:text-gray-300 z-10"
+        className="absolute top-4 right-4 text-white text-2xl hover:text-gray-300 z-20"
       >
         ✕
       </Link>
@@ -423,7 +484,7 @@ export default function ImageViewer({
       {/* Fullscreen / VR Toggle */}
       <button
         onClick={toggleFullScreen}
-        className="absolute top-4 right-16 text-white text-2xl hover:text-gray-300 z-10 p-1"
+        className="absolute top-4 right-16 text-white text-2xl hover:text-gray-300 z-20 p-1"
         title="Toggle Fullscreen / VR"
       >
         <svg
@@ -450,7 +511,7 @@ export default function ImageViewer({
               onDelete();
             }
           }}
-          className="absolute top-4 left-4 text-white hover:text-red-500 z-10 p-2"
+          className="absolute top-4 left-4 text-white hover:text-red-500 z-20 p-2"
           title="Delete Image"
         >
           <svg
@@ -474,7 +535,7 @@ export default function ImageViewer({
         <Wrapper
           to={prevUrl}
           onClick={onPrev}
-          className="absolute left-4 top-1/2 transform -translate-y-1/2 text-white text-4xl hover:text-gray-300 z-10"
+          className="absolute left-0 top-0 h-full w-24 flex items-center justify-center text-white text-6xl hover:bg-white/10 hover:text-white z-10 select-none transition-colors"
         >
           ‹
         </Wrapper>
@@ -483,7 +544,7 @@ export default function ImageViewer({
         <Wrapper
           to={nextUrl}
           onClick={onNext}
-          className="absolute right-4 top-1/2 transform -translate-y-1/2 text-white text-4xl hover:text-gray-300 z-10"
+          className="absolute right-0 top-0 h-full w-24 flex items-center justify-center text-white text-6xl hover:bg-white/10 hover:text-white z-10 select-none transition-colors"
         >
           ›
         </Wrapper>
