@@ -12,6 +12,12 @@ interface ImageViewerProps {
   onDelete?: () => void;
 }
 
+const globalState = {
+  lastNavTime: 0,
+  isScrolling: false,
+  scrollTimeout: null as NodeJS.Timeout | null,
+};
+
 export default function ImageViewer({
   src,
   alt,
@@ -382,64 +388,55 @@ export default function ImageViewer({
   const handleWheel = (e: React.WheelEvent) => {
     // If we have recently processed an input (e.g. from Gamepad), ignore wheel
     // to prevent conflict or double-handling if browser maps stick to wheel.
-    if (Date.now() - lastInputTimeRef.current < 200) return;
+    const now = Date.now();
+    if (now - lastInputTimeRef.current < 200) return;
 
     // Debug info for wheel
     if (isDebugVisible) {
-      lastKeyEventRef.current = `Wheel: dx=${e.deltaX.toFixed(
-        0
-      )}, dy=${e.deltaY.toFixed(0)}`;
+        lastKeyEventRef.current = `Wheel: dx=${e.deltaX.toFixed(0)}, dy=${e.deltaY.toFixed(0)}`;
     }
 
-    // Debounce "hold" inputs.
-    // Reset the "scrolling stopped" timer on every event
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
+    // Global Debounce logic for "Hold" gestures (persists across remounts)
+    if (globalState.scrollTimeout) {
+        clearTimeout(globalState.scrollTimeout);
     }
-    scrollTimeoutRef.current = setTimeout(() => {
-      isScrollingRef.current = false;
-    }, 150);
+    // If no events for 200ms, reset the scrolling lock
+    globalState.scrollTimeout = setTimeout(() => {
+        globalState.isScrolling = false;
+    }, 200);
 
-    // Check for horizontal scroll (navigation)
-    // Stricter check: Horizontal component must be 2x stronger than vertical to avoid accidents when zooming
-    // Quest thumbstick sends small continuous deltaX values (e.g. 3, 5, etc.)
-    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) * 2) {
-      // Only trigger if we aren't already in the middle of a continuous scroll gesture
-      if (!isScrollingRef.current && Math.abs(e.deltaX) > 10) {
-        const now = Date.now();
-        if (e.deltaX > 0) {
-          if (onNext) {
-            onNext();
-            isScrollingRef.current = true;
-            lastInputTimeRef.current = now;
-          } else if (nextUrl) {
-            navigate(nextUrl);
-            isScrollingRef.current = true;
-            lastInputTimeRef.current = now;
-          }
-        } else if (e.deltaX < 0) {
-          if (onPrev) {
-            onPrev();
-            isScrollingRef.current = true;
-            lastInputTimeRef.current = now;
-          } else if (prevUrl) {
-            navigate(prevUrl);
-            isScrollingRef.current = true;
-            lastInputTimeRef.current = now;
-          }
+    const absDx = Math.abs(e.deltaX);
+    const absDy = Math.abs(e.deltaY);
+
+    // Lock 1: Horizontal Navigation (Strict Dominance)
+    if (absDx > absDy * 2) {
+      // Threshold check
+      if (absDx > 10) {
+        // Only trigger if we aren't already locked in a scroll/hold gesture
+        // AND ensuring we don't double-fire rapidly (250ms absolute min)
+        if (!globalState.isScrolling && (now - globalState.lastNavTime > 250)) {
+            if (e.deltaX > 0) {
+                if (onNext) { onNext(); globalState.lastNavTime = now; globalState.isScrolling = true; }
+                else if (nextUrl) { navigate(nextUrl); globalState.lastNavTime = now; globalState.isScrolling = true; }
+            } else {
+                if (onPrev) { onPrev(); globalState.lastNavTime = now; globalState.isScrolling = true; }
+                else if (prevUrl) { navigate(prevUrl); globalState.lastNavTime = now; globalState.isScrolling = true; }
+            }
         }
       }
-      return;
+      return; // prevent zoom fallthrough
     }
 
-    if (e.deltaY < 0) {
-      setScale((prev) => Math.min(prev * 1.2, 5)); // Max zoom 5x
-    } else if (e.deltaY > 0) {
-      setScale((prev) => Math.max(prev / 1.2, 0.1)); // Min zoom 0.1x
+    // Lock 2: Vertical Zoom (Strict Dominance)
+    if (absDy > absDx * 2) {
+         if (e.deltaY < 0) {
+           setScale((prev) => Math.min(prev * 1.2, 5));
+         } else if (e.deltaY > 0) {
+           setScale((prev) => Math.max(prev / 1.2, 0.1));
+         }
     }
-  };
 
-  // Gamepad polling for VR/Game controllers (Desktop Mode)
+    // If neither strict block is met (diagonal noise), do nothing.
   useEffect(() => {
     // If in VR session, the session loop handles polling
     if (xrSessionRef.current) return;
