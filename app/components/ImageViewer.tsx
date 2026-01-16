@@ -29,7 +29,14 @@ export default function ImageViewer({
   const [isDragging, setIsDragging] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [isDebugVisible, setIsDebugVisible] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
+
+  // Ref to track debug visibility for the gamepad loop
+  const isDebugVisibleRef = useRef(false);
+  useEffect(() => {
+    isDebugVisibleRef.current = isDebugVisible;
+  }, [isDebugVisible]);
 
   // Refs for gamepad state persistence across renders
   const lastInputTimeRef = useRef(0);
@@ -122,9 +129,11 @@ export default function ImageViewer({
     }
 
     // Debug overlay if requested
+    // Debug overlay if requested
     if (
-      typeof window !== "undefined" &&
-      window.location.search.includes("debug=gamepad")
+      isDebugVisibleRef.current ||
+      (typeof window !== "undefined" &&
+        window.location.search.includes("debug=gamepad"))
     ) {
       const debugDiv =
         document.getElementById("gamepad-debug") ||
@@ -138,7 +147,9 @@ export default function ImageViewer({
       debugDiv.style.fontSize = "12px";
       debugDiv.style.zIndex = "9999";
       debugDiv.style.whiteSpace = "pre";
-      document.body.appendChild(debugDiv);
+      debugDiv.style.pointerEvents = "none";
+      debugDiv.style.display = "block";
+      if (!debugDiv.parentElement) document.body.appendChild(debugDiv);
 
       let debugText = "Gamepads:\n";
       for (let i = 0; i < gamepads.length; i++) {
@@ -146,10 +157,15 @@ export default function ImageViewer({
         if (g) {
           debugText += `[${i}] ${g.id}\n Axes: ${g.axes
             .map((a) => a.toFixed(2))
-            .join(", ")}\n`;
+            .join(", ")}\n Buttons: ${g.buttons
+            .map((b) => (b.pressed ? "1" : "0"))
+            .join("")}\n`;
         }
       }
       debugDiv.innerText = debugText;
+    } else {
+      const debugDiv = document.getElementById("gamepad-debug");
+      if (debugDiv) debugDiv.style.display = "none";
     }
   };
 
@@ -527,6 +543,28 @@ export default function ImageViewer({
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
+          />
+        </svg>
+      </button>
+
+      {/* Debug Toggle */}
+      <button
+        onClick={() => setIsDebugVisible(!isDebugVisible)}
+        className="absolute top-4 right-28 text-white text-2xl hover:text-gray-300 z-20 p-1"
+        title="Toggle Gamepad Debug"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={1.5}
+          stroke="currentColor"
+          className="w-6 h-6"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
           />
         </svg>
       </button>
