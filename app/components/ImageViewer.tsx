@@ -54,13 +54,24 @@ export default function ImageViewer({
 
   // Unified Gamepad logic
   const checkGamepadInput = () => {
-    if (typeof navigator === "undefined" || !navigator.getGamepads) return;
+    // Gather all gamepads from Navigator and WebXR
+    const allGamepads: (Gamepad | null)[] = [];
 
-    const gamepads = navigator.getGamepads();
+    if (typeof navigator !== "undefined" && navigator.getGamepads) {
+      const gps = navigator.getGamepads();
+      for (let i = 0; i < gps.length; i++) allGamepads.push(gps[i]);
+    }
+
+    if (xrSessionRef.current && xrSessionRef.current.inputSources) {
+      for (const source of xrSessionRef.current.inputSources) {
+        if (source.gamepad) allGamepads.push(source.gamepad);
+      }
+    }
+
     let inputDetected = false;
 
     // Check all gamepads (Quest puts controllers at various indices)
-    for (const gp of gamepads) {
+    for (const gp of allGamepads) {
       if (gp) {
         // Standard mapping:
         // Left Stick: Axes 0 (X), 1 (Y)
@@ -129,7 +140,6 @@ export default function ImageViewer({
     }
 
     // Debug overlay if requested
-    // Debug overlay if requested
     if (
       isDebugVisibleRef.current ||
       (typeof window !== "undefined" &&
@@ -152,14 +162,16 @@ export default function ImageViewer({
       if (!debugDiv.parentElement) document.body.appendChild(debugDiv);
 
       let debugText = "Gamepads:\n";
-      for (let i = 0; i < gamepads.length; i++) {
-        const g = gamepads[i];
+      for (let i = 0; i < allGamepads.length; i++) {
+        const g = allGamepads[i];
         if (g) {
           debugText += `[${i}] ${g.id}\n Axes: ${g.axes
             .map((a) => a.toFixed(2))
             .join(", ")}\n Buttons: ${g.buttons
             .map((b) => (b.pressed ? "1" : "0"))
             .join("")}\n`;
+        } else {
+          debugText += `[${i}] Disconnected/Null\n`;
         }
       }
       debugDiv.innerText = debugText;
@@ -172,6 +184,27 @@ export default function ImageViewer({
   // Store the check function in a ref so the XR loop can call the logic
   const checkGamepadRef = useRef(checkGamepadInput);
   checkGamepadRef.current = checkGamepadInput;
+
+  // Listen for gamepad connection events (Essential for Quest browser detection)
+  useEffect(() => {
+    const handleConnect = (e: GamepadEvent) => {
+      console.log("Gamepad connected:", e.gamepad);
+      // Force a manual check if needed, though the poll loop manages this.
+      if (checkGamepadRef.current) checkGamepadRef.current();
+    };
+
+    const handleDisconnect = (e: GamepadEvent) => {
+      console.log("Gamepad disconnected:", e.gamepad);
+    };
+
+    window.addEventListener("gamepadconnected", handleConnect);
+    window.addEventListener("gamepaddisconnected", handleDisconnect);
+
+    return () => {
+      window.removeEventListener("gamepadconnected", handleConnect);
+      window.removeEventListener("gamepaddisconnected", handleDisconnect);
+    };
+  }, []);
 
   // Clean up XR session if component unmounts
   useEffect(() => {
