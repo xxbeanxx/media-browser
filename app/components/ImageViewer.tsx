@@ -52,76 +52,104 @@ export default function ImageViewer({
     const gamepads = navigator.getGamepads();
     let inputDetected = false;
 
-    // Check first few gamepads
-    for (let i = 0; i < Math.min(gamepads.length, 2); i++) {
-      const gp = gamepads[i];
+    // Check all gamepads (Quest puts controllers at various indices)
+    for (const gp of gamepads) {
       if (gp) {
-        // Quest controllers map Thumbsticks to axes 2 and 3 usually, or 0/1 depending on browser mapping
-        // We check 2/3 first (common for X/Y on standard gamepad), then 0/1
-        let axisX = gp.axes[2];
-        let axisY = gp.axes[3];
-
-        // Fallback to 0/1 if 2/3 are undefined or empty (sometimes Quest browser uses 2/3 for secondary stick?)
-        // Actually standard gamepad mapping: Left Stick = 0,1. Right Stick = 2,3.
-        // Oculus Touch: Main stick is usually 2,3 in some contexts or 0,1 in others.
-        // Let's just check the strongest signal.
-        if (!axisX && !axisY) {
-          axisX = gp.axes[0];
-          axisY = gp.axes[1];
-        } else {
-          // If both exist, take the one with higher magnitude?
-          // Or just check if 0/1 has input
-          if (Math.abs(gp.axes[0]) > Math.abs(axisX || 0)) axisX = gp.axes[0];
-          if (Math.abs(gp.axes[1]) > Math.abs(axisY || 0)) axisY = gp.axes[1];
-        }
+        // Standard mapping:
+        // Left Stick: Axes 0 (X), 1 (Y)
+        // Right Stick: Axes 2 (X), 3 (Y)
+        // Quest 2D mapping: Often 2 separate gamepads, each with Stick on 0/1.
 
         const now = Date.now();
+        const { onPrev, onNext, setScale } = handlersRef.current;
 
-        // Threshold for activation - Reduced to 0.3 for faster response
-        if (Math.abs(axisX || 0) > 0.3 || Math.abs(axisY || 0) > 0.3) {
-          inputDetected = true;
-          const { onPrev, onNext, setScale } = handlersRef.current;
+        // Helper to process an axis pair
+        const processStick = (axX: number, axY: number) => {
+          if (Math.abs(axX) > 0.3 || Math.abs(axY) > 0.3) {
+            inputDetected = true;
 
-          if (Math.abs(axisX || 0) > Math.abs(axisY || 0)) {
-            // Horizontal - Navigation
-            const isNewPress = !wasActiveRef.current;
-            const isRepeat = now - lastInputTimeRef.current > 250;
+            if (Math.abs(axX) > Math.abs(axY)) {
+              // Horizontal - Navigation
+              const isNewPress = !wasActiveRef.current;
+              const isRepeat = now - lastInputTimeRef.current > 250;
 
-            if (isNewPress || isRepeat) {
-              if ((axisX || 0) < -0.3) {
-                if (onPrev) {
-                  onPrev();
-                  lastInputTimeRef.current = now;
-                  wasActiveRef.current = true;
-                }
-              } else if ((axisX || 0) > 0.3) {
-                if (onNext) {
-                  onNext();
-                  lastInputTimeRef.current = now;
-                  wasActiveRef.current = true;
+              if (isNewPress || isRepeat) {
+                if (axX < -0.3) {
+                  if (onPrev) {
+                    onPrev();
+                    lastInputTimeRef.current = now;
+                    wasActiveRef.current = true;
+                  }
+                } else if (axX > 0.3) {
+                  if (onNext) {
+                    onNext();
+                    lastInputTimeRef.current = now;
+                    wasActiveRef.current = true;
+                  }
                 }
               }
-            }
-          } else {
-            // Vertical - Zoom
-            if (now - lastInputTimeRef.current > 50) {
-              if ((axisY || 0) < -0.3) {
-                setScale((prev) => Math.min(prev * 1.05, 5));
-                lastInputTimeRef.current = now;
-                wasActiveRef.current = true;
-              } else if ((axisY || 0) > 0.3) {
-                setScale((prev) => Math.max(prev / 1.05, 0.1));
-                lastInputTimeRef.current = now;
-                wasActiveRef.current = true;
+            } else {
+              // Vertical - Zoom
+              if (now - lastInputTimeRef.current > 50) {
+                if (axY < -0.3) {
+                  setScale((prev) => Math.min(prev * 1.05, 5));
+                  lastInputTimeRef.current = now;
+                  wasActiveRef.current = true;
+                } else if (axY > 0.3) {
+                  setScale((prev) => Math.max(prev / 1.05, 0.1));
+                  lastInputTimeRef.current = now;
+                  wasActiveRef.current = true;
+                }
               }
             }
           }
+        };
+
+        // Check Primary Stick (Axes 0/1) - Common for Quest 2D & Left Stick
+        if (gp.axes.length >= 2) {
+          processStick(gp.axes[0], gp.axes[1]);
+        }
+
+        // Check Secondary Stick (Axes 2/3) - Common for Standard Right Stick
+        if (gp.axes.length >= 4) {
+          processStick(gp.axes[2], gp.axes[3]);
         }
       }
     }
 
     if (!inputDetected) {
       wasActiveRef.current = false;
+    }
+
+    // Debug overlay if requested
+    if (
+      typeof window !== "undefined" &&
+      window.location.search.includes("debug=gamepad")
+    ) {
+      const debugDiv =
+        document.getElementById("gamepad-debug") ||
+        document.createElement("div");
+      debugDiv.id = "gamepad-debug";
+      debugDiv.style.position = "fixed";
+      debugDiv.style.top = "10px";
+      debugDiv.style.left = "10px";
+      debugDiv.style.background = "rgba(0,0,0,0.8)";
+      debugDiv.style.color = "lime";
+      debugDiv.style.fontSize = "12px";
+      debugDiv.style.zIndex = "9999";
+      debugDiv.style.whiteSpace = "pre";
+      document.body.appendChild(debugDiv);
+
+      let debugText = "Gamepads:\n";
+      for (let i = 0; i < gamepads.length; i++) {
+        const g = gamepads[i];
+        if (g) {
+          debugText += `[${i}] ${g.id}\n Axes: ${g.axes
+            .map((a) => a.toFixed(2))
+            .join(", ")}\n`;
+        }
+      }
+      debugDiv.innerText = debugText;
     }
   };
 
