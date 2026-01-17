@@ -393,16 +393,18 @@ export default function ImageViewer({
 
     // Debug info for wheel
     if (isDebugVisible) {
-        lastKeyEventRef.current = `Wheel: dx=${e.deltaX.toFixed(0)}, dy=${e.deltaY.toFixed(0)}`;
+      lastKeyEventRef.current = `Wheel: dx=${e.deltaX.toFixed(
+        0
+      )}, dy=${e.deltaY.toFixed(0)}`;
     }
 
     // Global Debounce logic for "Hold" gestures (persists across remounts)
     if (globalState.scrollTimeout) {
-        clearTimeout(globalState.scrollTimeout);
+      clearTimeout(globalState.scrollTimeout);
     }
     // If no events for 200ms, reset the scrolling lock
     globalState.scrollTimeout = setTimeout(() => {
-        globalState.isScrolling = false;
+      globalState.isScrolling = false;
     }, 200);
 
     const absDx = Math.abs(e.deltaX);
@@ -414,14 +416,28 @@ export default function ImageViewer({
       if (absDx > 10) {
         // Only trigger if we aren't already locked in a scroll/hold gesture
         // AND ensuring we don't double-fire rapidly (250ms absolute min)
-        if (!globalState.isScrolling && (now - globalState.lastNavTime > 250)) {
-            if (e.deltaX > 0) {
-                if (onNext) { onNext(); globalState.lastNavTime = now; globalState.isScrolling = true; }
-                else if (nextUrl) { navigate(nextUrl); globalState.lastNavTime = now; globalState.isScrolling = true; }
-            } else {
-                if (onPrev) { onPrev(); globalState.lastNavTime = now; globalState.isScrolling = true; }
-                else if (prevUrl) { navigate(prevUrl); globalState.lastNavTime = now; globalState.isScrolling = true; }
+        if (!globalState.isScrolling && now - globalState.lastNavTime > 250) {
+          if (e.deltaX > 0) {
+            if (onNext) {
+              onNext();
+              globalState.lastNavTime = now;
+              globalState.isScrolling = true;
+            } else if (nextUrl) {
+              navigate(nextUrl);
+              globalState.lastNavTime = now;
+              globalState.isScrolling = true;
             }
+          } else {
+            if (onPrev) {
+              onPrev();
+              globalState.lastNavTime = now;
+              globalState.isScrolling = true;
+            } else if (prevUrl) {
+              navigate(prevUrl);
+              globalState.lastNavTime = now;
+              globalState.isScrolling = true;
+            }
+          }
         }
       }
       return; // prevent zoom fallthrough
@@ -429,14 +445,17 @@ export default function ImageViewer({
 
     // Lock 2: Vertical Zoom (Strict Dominance)
     if (absDy > absDx * 2) {
-         if (e.deltaY < 0) {
-           setScale((prev) => Math.min(prev * 1.2, 5));
-         } else if (e.deltaY > 0) {
-           setScale((prev) => Math.max(prev / 1.2, 0.1));
-         }
+      if (e.deltaY < 0) {
+        setScale((prev) => Math.min(prev * 1.2, 5));
+      } else if (e.deltaY > 0) {
+        setScale((prev) => Math.max(prev / 1.2, 0.1));
+      }
     }
 
     // If neither strict block is met (diagonal noise), do nothing.
+  };
+
+  // Gamepad polling for VR/Game controllers (Desktop Mode)
   useEffect(() => {
     // If in VR session, the session loop handles polling
     if (xrSessionRef.current) return;
@@ -644,8 +663,9 @@ export default function ImageViewer({
               onDelete();
             }
           }}
-          className="absolute top-4 left-4 text-white hover:text-red-500 z-20 p-2"
+          className="absolute top-4 left-4 h-14 w-14 rounded-full border border-white/40 bg-white/10 text-white hover:border-red-400 hover:bg-red-500/20 hover:text-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2 focus-visible:ring-offset-black z-20 flex items-center justify-center"
           title="Delete Image"
+          aria-label="Delete Image"
         >
           <svg
             className="w-6 h-6"
