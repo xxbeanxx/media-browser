@@ -24,6 +24,19 @@ Install the dependencies:
 npm install
 ```
 
+Authentication
+--------------
+
+Set a password in your environment to protect the site. Example in a `.env` file:
+
+```
+SITE_PASSWORD=your-password-here
+SESSION_SECRET=a-long-random-secret
+PHOTO_DIRS=/path/to/photos
+```
+
+The app uses a signed session cookie (session-scoped) to remember authenticated users.
+
 ### Development
 
 Start the development server with HMR:

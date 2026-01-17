@@ -1,9 +1,19 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { isAuthenticated } from "~/utils/auth.server";
 import { resolvePhotoPath } from "~/utils/photo-path";
 import type { Route } from "./+types/api.photos";
 
 export async function loader({ params }: Route.LoaderArgs) {
+  // Protect direct file access
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const req: any = (globalThis as any).__RR_REQUEST || undefined;
+  // If we have access to request via environment, try to use isAuthenticated
+  if (typeof Request !== "undefined" && req && req instanceof Request) {
+    const authed = await isAuthenticated(req as Request);
+    if (!authed) return new Response("Unauthorized", { status: 401 });
+  }
+  // If unable to access request object here (platform variant), rely on root loader to redirect
   const filePath = params["*"] || "";
   const resolved = await resolvePhotoPath(filePath);
 

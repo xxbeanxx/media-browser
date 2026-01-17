@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fsSync, { promises as fs } from "fs";
 import path from "path";
 import sharp from "sharp";
+import { isAuthenticated } from "~/utils/auth.server";
 import { resolvePhotoPath } from "~/utils/photo-path";
 import type { Route } from "./+types/api.thumbnails";
 
@@ -10,6 +11,13 @@ const CACHE_DIR = path.join(process.cwd(), ".cache", "thumbnails");
 fsSync.mkdirSync(CACHE_DIR, { recursive: true });
 
 export async function loader({ params }: Route.LoaderArgs) {
+  // Protect thumbnail access similarly to photos API
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const req: any = (globalThis as any).__RR_REQUEST || undefined;
+  if (typeof Request !== "undefined" && req && req instanceof Request) {
+    const authed = await isAuthenticated(req as Request);
+    if (!authed) return new Response("Unauthorized", { status: 401 });
+  }
   const filePath = params["*"] || "";
   const resolved = await resolvePhotoPath(filePath);
 

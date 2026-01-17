@@ -7,6 +7,8 @@ import {
   ScrollRestoration,
 } from "react-router";
 
+import { redirect } from "react-router";
+import { isAuthenticated } from "~/utils/auth.server";
 import type { Route } from "./+types/root";
 import "./app.css";
 
@@ -43,6 +45,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return <Outlet />;
+}
+
+export async function loader({ request }: Route.LoaderArgs) {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+
+  // Allow login page without auth
+  if (pathname === "/login") return null;
+
+  // For API endpoints and assets, also require auth but handle via same redirect
+
+  const authed = await isAuthenticated(request as unknown as Request);
+  if (!authed) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("redirectTo", pathname);
+    return redirect(loginUrl.toString());
+  }
+
+  return null;
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
