@@ -99,12 +99,23 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       return redirect(url.toString());
     }
 
-    // If seed provided, use a deterministic shuffle so reloading (eg delete)
-    // preserves ordering except for the removed file.
+    // If seed provided, generate a stable pseudo-random key per image based on
+    // the seed and filename then sort by that key. This ensures deleting an
+    // image doesn't change the relative order of the remaining images.
     if (random && seedParam) {
       const seed = Number(seedParam) || 0;
 
-      // small seeded PRNG (mulberry32)
+      // Simple string -> 32-bit hash (FNV-1a)
+      function fnv1a32(str: string) {
+        let h = 0x811c9dc5;
+        for (let i = 0; i < str.length; i++) {
+          h ^= str.charCodeAt(i);
+          h = Math.imul(h, 0x01000193);
+        }
+        return h >>> 0;
+      }
+
+      // Small PRNG using mulberry32 for mixing
       function mulberry32(a: number) {
         return function () {
           let t = (a += 0x6d2b79f5);
@@ -114,12 +125,20 @@ export async function loader({ params, request }: Route.LoaderArgs) {
         };
       }
 
-      const rand = mulberry32(seed >>> 0);
+      // Map each image to a deterministic key and sort by it
+      const keyed = images.map((img) => {
+        const h = fnv1a32(img);
+        const mixedSeed = (h ^ (seed >>> 0)) >>> 0;
+        const r = mulberry32(mixedSeed)();
+        return { img, key: r };
+      });
 
-      for (let i = images.length - 1; i > 0; i--) {
-        const j = Math.floor(rand() * (i + 1));
-        [images[i], images[j]] = [images[j], images[i]];
-      }
+      keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      const sorted = keyed.map((k) => k.img);
+
+      // replace images array contents
+      images.length = 0;
+      images.push(...sorted);
     }
 
     return {
