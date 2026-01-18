@@ -3,6 +3,7 @@ import path from "path";
 import { useEffect, useState } from "react";
 import {
   Link,
+  redirect,
   useLoaderData,
   useNavigate,
   useSearchParams,
@@ -89,11 +90,34 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 
     const url = new URL(request.url);
     const random = url.searchParams.get("random") === "true";
+    const seedParam = url.searchParams.get("seed");
 
-    if (random) {
-      // Shuffle array
+    // If random requested but no seed provided, generate one and redirect
+    if (random && !seedParam) {
+      const seed = Math.floor(Math.random() * 0xffffffff);
+      url.searchParams.set("seed", String(seed));
+      return redirect(url.toString());
+    }
+
+    // If seed provided, use a deterministic shuffle so reloading (eg delete)
+    // preserves ordering except for the removed file.
+    if (random && seedParam) {
+      const seed = Number(seedParam) || 0;
+
+      // small seeded PRNG (mulberry32)
+      function mulberry32(a: number) {
+        return function () {
+          let t = (a += 0x6d2b79f5);
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      const rand = mulberry32(seed >>> 0);
+
       for (let i = images.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(rand() * (i + 1));
         [images[i], images[j]] = [images[j], images[i]];
       }
     }
@@ -139,9 +163,14 @@ export default function Slideshow() {
     formData.append("intent", "delete");
     formData.append("filePath", imagePath);
 
+    // Preserve current search params (random + seed) so the loader keeps the
+    // same randomized ordering after deletion.
+    const params = new URLSearchParams(searchParams);
+    const actionUrl = params.toString() ? `?${params.toString()}` : undefined;
+
     // Deleting maintains the current index, which naturally points to the next item
     // unless we were at the end, which the useEffect above handles.
-    submit(formData, { method: "post" });
+    submit(formData, { method: "post", action: actionUrl });
   };
 
   useEffect(() => {
